@@ -1,0 +1,175 @@
+{
+  "$schema": "https://raw.githubusercontent.com/rocketride-org/rocketride-server/main/schemas/pipeline.v1.json",
+  "name": "claim-analysis-orchestration",
+  "version": "2.0.0",
+  "description": "Multi-agent warranty claim analysis pipeline running on RocketRide C++ runtime with parallel agent execution, OCR, PII redaction, and validator consistency gates.",
+  "metadata": {
+    "engine": "rocketride-cpp-multithreaded",
+    "interop": ["crewai", "langchain", "gemini-vision", "tesseract-ocr"],
+    "governance": "HUMAN_IN_THE_LOOP_MANDATORY"
+  },
+  "nodes": [
+    {
+      "id": "preprocessing_node",
+      "name": "Evidence Preprocessor",
+      "type": "preprocessor",
+      "description": "Validates, extracts metadata, normalizes images, and performs PII redaction on customer documents.",
+      "implementation": {
+        "engine": "rocketride.builtin.preprocessor",
+        "entrypoint": "services/preprocessing.ts#prepareImageForVision",
+        "pii_redaction_node": "rocketride.builtin.pii_redaction_ner_v1"
+      },
+      "inputs": {
+        "files": "claim.files",
+        "customer": "claim.customer"
+      },
+      "outputs": ["preprocessed_evidence"],
+      "depends_on": []
+    },
+    {
+      "id": "vision_node",
+      "name": "Vision Agent",
+      "type": "agent",
+      "description": "Multimodal computer vision node inspecting product images/keyframes for physical cracks, impacts, and serial number barcodes.",
+      "implementation": {
+        "engine": "rocketride.agent.multimodal",
+        "provider": "gemini-1.5-flash-vision",
+        "entrypoint": "services/agents/visionAgent.ts#run",
+        "parameters": {
+          "temperature": 0.1,
+          "damage_threshold": 0.85
+        }
+      },
+      "inputs": {
+        "evidence": "preprocessed_evidence.images",
+        "expectedSerialNumber": "claim.product.serialNumber"
+      },
+      "outputs": ["vision_findings"],
+      "depends_on": ["preprocessing_node"]
+    },
+    {
+      "id": "document_node",
+      "name": "Document Agent",
+      "type": "ocr_agent",
+      "description": "OCR and document entity extraction node parsing invoices, purchase timestamps, retailer IDs, and line items.",
+      "implementation": {
+        "engine": "rocketride.builtin.document_parser_v1",
+        "entrypoint": "services/agents/documentAgent.ts#run",
+        "ocr_engine": "tesseract_v2"
+      },
+      "inputs": {
+        "invoice": "preprocessed_evidence.invoice",
+        "claimId": "claim.claimId"
+      },
+      "outputs": ["document_findings"],
+      "depends_on": ["preprocessing_node"]
+    },
+    {
+      "id": "fault_node",
+      "name": "Fault Agent",
+      "type": "agent",
+      "description": "Domain-specific diagnostic classifier analyzing customer complaints against hardware failure taxonomies and diagnostic logs.",
+      "implementation": {
+        "engine": "rocketride.agent.llm",
+        "provider": "gemini-1.5-pro",
+        "entrypoint": "services/agents/faultAgent.ts#run"
+      },
+      "inputs": {
+        "complaint": "claim.complaint",
+        "diagnosticReport": "claim.files.diagnosticReport",
+        "visionFindings": "vision_findings"
+      },
+      "outputs": ["fault_findings"],
+      "depends_on": ["preprocessing_node"]
+    },
+    {
+      "id": "invoice_verification_node",
+      "name": "Invoice Verification Agent",
+      "type": "verifier",
+      "description": "Cross-checks OCR invoice data against master authorized retailer registries and serial records.",
+      "implementation": {
+        "engine": "rocketride.verifier.external",
+        "entrypoint": "services/verification/invoiceVerification.ts#run"
+      },
+      "inputs": {
+        "documentResult": "document_findings",
+        "product": "claim.product"
+      },
+      "outputs": ["invoice_verification"],
+      "depends_on": ["document_node"]
+    },
+    {
+      "id": "warranty_node",
+      "name": "Warranty Agent",
+      "type": "rules_agent",
+      "description": "Evaluates statutory warranty durations, purchase timestamps, coverage clauses, and exclusion terms.",
+      "implementation": {
+        "engine": "rocketride.rules_engine.v1",
+        "entrypoint": "services/agents/warrantyAgent.ts#run"
+      },
+      "inputs": {
+        "product": "claim.product",
+        "purchaseDate": "document_findings.purchaseDate",
+        "claimDate": "claim.submittedAt",
+        "faultResult": "fault_findings",
+        "invoiceVerification": "invoice_verification"
+      },
+      "outputs": ["warranty_findings"],
+      "depends_on": ["document_node", "fault_node", "invoice_verification_node"]
+    },
+    {
+      "id": "decision_node",
+      "name": "Decision Agent",
+      "type": "synthesis_agent",
+      "description": "Synthesizes multi-agent evidence into an actionable resolution recommendation with confidence score (RECOMMENDATION ONLY).",
+      "implementation": {
+        "engine": "rocketride.agent.synthesis",
+        "entrypoint": "services/agents/decisionAgent.ts#run",
+        "disclaimer_required": true
+      },
+      "inputs": {
+        "visionResult": "vision_findings",
+        "documentResult": "document_findings",
+        "invoiceVerification": "invoice_verification",
+        "faultResult": "fault_findings",
+        "warrantyResult": "warranty_findings"
+      },
+      "outputs": ["recommendation"],
+      "depends_on": [
+        "vision_node",
+        "document_node",
+        "invoice_verification_node",
+        "fault_node",
+        "warranty_node"
+      ]
+    },
+    {
+      "id": "validator_node",
+      "name": "Consistency Validator",
+      "type": "safety_validator",
+      "description": "Autonomous gatekeeper evaluating cross-agent contradictions, customer claim statements vs sensor data, and evidence integrity.",
+      "implementation": {
+        "engine": "rocketride.safety_gate.v1",
+        "entrypoint": "services/agents/validator.ts#run"
+      },
+      "inputs": {
+        "customerComplaint": "claim.complaint",
+        "visionResult": "vision_findings",
+        "documentResult": "document_findings",
+        "invoiceVerification": "invoice_verification",
+        "faultResult": "fault_findings",
+        "warrantyResult": "warranty_findings",
+        "decisionResult": "recommendation"
+      },
+      "outputs": ["validation"],
+      "depends_on": [
+        "vision_node",
+        "document_node",
+        "invoice_verification_node",
+        "fault_node",
+        "warranty_node",
+        "decision_node"
+      ]
+    }
+  ]
+}

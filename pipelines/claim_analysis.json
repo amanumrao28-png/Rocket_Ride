@@ -1,0 +1,71 @@
+{
+  "$schema": "https://raw.githubusercontent.com/rocketride-org/rocketride-server/main/schemas/pipeline.v1.json",
+  "name": "claim-analysis-orchestration",
+  "version": "1.0.0",
+  "description": "Multi-agent warranty claim analysis pipeline with vision, OCR, fault categorization, policy evaluation, and decision synthesis.",
+  "nodes": [
+    {
+      "id": "evidence_preprocessor",
+      "type": "preprocessor",
+      "description": "Validates, converts, and extracts metadata from claim evidence attachments",
+      "inputs": ["claim.evidence"],
+      "outputs": ["preprocessed_evidence"]
+    },
+    {
+      "id": "vision_agent",
+      "type": "agent",
+      "model": "gemini-1.5-flash-vision",
+      "description": "Inspects damage photos and serial numbers",
+      "inputs": ["preprocessed_evidence.images"],
+      "outputs": ["vision_findings"]
+    },
+    {
+      "id": "document_agent",
+      "type": "ocr_extractor",
+      "description": "Extracts purchase dates, retailer, order ID, and pricing from invoices",
+      "inputs": ["preprocessed_evidence.documents"],
+      "outputs": ["document_findings"]
+    },
+    {
+      "id": "fault_agent",
+      "type": "agent",
+      "description": "Categorizes reported issue against hardware failure classifications",
+      "inputs": ["claim.issueDescription", "vision_findings"],
+      "outputs": ["fault_findings"]
+    },
+    {
+      "id": "warranty_agent",
+      "type": "rules_engine",
+      "description": "Evaluates policy terms, expiration windows, and exclusions",
+      "inputs": ["claim.productId", "document_findings.purchaseDate", "fault_findings"],
+      "outputs": ["warranty_findings"]
+    },
+    {
+      "id": "invoice_verifier",
+      "type": "external_verifier",
+      "description": "Cross-references retailer authorization and order databases",
+      "inputs": ["document_findings"],
+      "outputs": ["invoice_verification"]
+    },
+    {
+      "id": "decision_recommender",
+      "type": "agent",
+      "description": "Synthesizes agent findings into a recommendation with confidence score",
+      "inputs": [
+        "vision_findings",
+        "document_findings",
+        "fault_findings",
+        "warranty_findings",
+        "invoice_verification"
+      ],
+      "outputs": ["recommendation"]
+    },
+    {
+      "id": "consistency_validator",
+      "type": "validator",
+      "description": "Detects conflicts or discrepancies across agent findings",
+      "inputs": ["vision_findings", "document_findings", "warranty_findings", "recommendation"],
+      "outputs": ["validation"]
+    }
+  ]
+}

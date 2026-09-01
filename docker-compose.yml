@@ -1,0 +1,68 @@
+version: "3.8"
+
+services:
+  mongo:
+    image: mongo:6.0
+    container_name: arbiter_mongo
+    restart: always
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:-example_password}
+      MONGO_INITDB_DATABASE: ${MONGODB_DB_NAME:-warranty_arbiter_db}
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mongo-express:
+    image: mongo-express:latest
+    container_name: arbiter_mongo_express
+    restart: always
+    ports:
+      - "8081:8081"
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: ${MONGO_INITDB_ROOT_USERNAME:-root}
+      ME_CONFIG_MONGODB_ADMINPASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:-example_password}
+      ME_CONFIG_MONGODB_SERVER: mongo
+      ME_CONFIG_MONGODB_PORT: 27017
+      ME_CONFIG_BASICAUTH_USERNAME: admin
+      ME_CONFIG_BASICAUTH_PASSWORD: pass
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: arbiter_backend
+    restart: always
+    environment:
+      MONGODB_URI: ${MONGODB_URI:-mongodb://root:example_password@mongo:27017/}
+      MONGODB_DB_NAME: ${MONGODB_DB_NAME:-warranty_arbiter_db}
+      JWT_SECRET: ${JWT_SECRET:-arbiter_jwt_super_secret_access_key_2026_x98f}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-arbiter_jwt_super_secret_refresh_key_2026_q41k}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
+      REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-7}
+      BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-12}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      SEED_MANAGER_EMAIL: ${SEED_MANAGER_EMAIL:-manager@warrantyarbiter.demo}
+      SEED_MANAGER_PASSWORD: ${SEED_MANAGER_PASSWORD:-demo1234}
+      SEED_MANAGER_NAME: ${SEED_MANAGER_NAME:-Marcus Vance}
+    ports:
+      - "8000:8000"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    command: >
+      sh -c "python scripts/ensure_indexes.py &&
+             python scripts/seed_bootstrap_manager.py &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+volumes:
+  mongo_data:

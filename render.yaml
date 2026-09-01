@@ -1,0 +1,35 @@
+services:
+  # 1. FastAPI Backend Service
+  - type: web
+    name: warranty-returns-backend
+    env: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: sh -c "python scripts/ensure_indexes.py && python scripts/seed_bootstrap_manager.py && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: MONGODB_URI
+        sync: false # Set your MongoDB Atlas connection string in Render Dashboard
+      - key: MONGODB_DB_NAME
+        value: warranty_arbiter_db
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "15"
+      - key: REFRESH_TOKEN_EXPIRE_DAYS
+        value: "7"
+      - key: BCRYPT_ROUNDS
+        value: "12"
+      - key: CORS_ORIGINS
+        sync: false # Set your frontend URL here (e.g. https://warranty-returns-frontend.onrender.com)
+
+  # 2. Next.js Frontend Service
+  - type: web
+    name: warranty-returns-frontend
+    env: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NEXT_PUBLIC_BACKEND_URL
+        sync: false # Set backend service URL here (e.g. https://warranty-returns-backend.onrender.com)
